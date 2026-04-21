@@ -52,7 +52,7 @@ osThreadId_t LedTaskHandle;
 const osThreadAttr_t LedTask_attributes = {
   .name = "LedTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for UartTask */
 osThreadId_t UartTaskHandle;
@@ -73,7 +73,21 @@ osThreadId_t HCSR04TaskHandle;
 const osThreadAttr_t HCSR04Task_attributes = {
   .name = "HCSR04Task",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for TrackTask */
+osThreadId_t TrackTaskHandle;
+const osThreadAttr_t TrackTask_attributes = {
+  .name = "TrackTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal1,
+};
+/* Definitions for DriverTask */
+osThreadId_t DriverTaskHandle;
+const osThreadAttr_t DriverTask_attributes = {
+  .name = "DriverTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for LEDFlash */
 osMessageQueueId_t LEDFlashHandle;
@@ -85,6 +99,16 @@ osMessageQueueId_t DistanceHandle;
 const osMessageQueueAttr_t Distance_attributes = {
   .name = "Distance"
 };
+/* Definitions for Track */
+osMessageQueueId_t TrackHandle;
+const osMessageQueueAttr_t Track_attributes = {
+  .name = "Track"
+};
+/* Definitions for DriverPWM */
+osMessageQueueId_t DriverPWMHandle;
+const osMessageQueueAttr_t DriverPWM_attributes = {
+  .name = "DriverPWM"
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -95,6 +119,8 @@ void StartLedTask(void *argument);
 extern void StartUartTask(void *argument);
 extern void StartOledTask(void *argument);
 extern void StartHCSR04Task(void *argument);
+extern void StartTrackTask(void *argument);
+extern void StartDriverTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -127,6 +153,12 @@ void MX_FREERTOS_Init(void) {
   /* creation of Distance */
   DistanceHandle = osMessageQueueNew (16, sizeof(float), &Distance_attributes);
 
+  /* creation of Track */
+  TrackHandle = osMessageQueueNew (16, sizeof(uint8_t), &Track_attributes);
+
+  /* creation of DriverPWM */
+  DriverPWMHandle = osMessageQueueNew (16, sizeof(uint32_t), &DriverPWM_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -143,6 +175,12 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of HCSR04Task */
   HCSR04TaskHandle = osThreadNew(StartHCSR04Task, NULL, &HCSR04Task_attributes);
+
+  /* creation of TrackTask */
+  TrackTaskHandle = osThreadNew(StartTrackTask, NULL, &TrackTask_attributes);
+
+  /* creation of DriverTask */
+  DriverTaskHandle = osThreadNew(StartDriverTask, NULL, &DriverTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */

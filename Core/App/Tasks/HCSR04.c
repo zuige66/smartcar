@@ -61,7 +61,7 @@ void StartHCSR04Task(void *argument) {
             // 格式完美：整数.两位小数，无多余0，格式完整，全程只用%d整数格式符，完全不碰%f
             int len = sprintf(debug_msg, "shortDebug: rising=%lu, falling=%lu, distance=%u.%02u cm\r\n",
                                 rising_cnt, falling_cnt, dist_int, dist_dec);
-            HAL_UART_Transmit(&huart2, (uint8_t *)debug_msg, len, HAL_MAX_DELAY);
+            //HAL_UART_Transmit(&huart2, (uint8_t *)debug_msg, len, HAL_MAX_DELAY);
         }
         // else // 超时无回波，超量程标记
         // {

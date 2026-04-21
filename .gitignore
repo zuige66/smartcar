@@ -1,3 +1,66 @@
-build
-mx.scratch
-!.settings
+# STM32 Project .gitignore
+
+# Build output
+build/
+build-*
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Compiled files
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+
+# Debug files
+*.dSYM/
+*.su
+
+# Doxygen files
+docs/
+Doxyfile
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Configuration files that may contain local settings
+*.local
+*.user
+
+# CubeMX generated files (if not needed)
+# *.ioc
+
+# OS generated files
+Thumbs.db
+.DS_Store
+
+# Log files
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# CMake files (if not needed)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Ninja files
+.ninja*
+
+# VS Code CMake tools
+.vscode/cmake-kits.json
+.vscode/settings.json
+
+# Clion files
+cmake-build-*/

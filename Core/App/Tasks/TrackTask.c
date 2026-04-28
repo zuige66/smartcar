@@ -51,6 +51,6 @@ void StartTrackTask(void *argument) {
         HAL_UART_Transmit(&huart2, msg, strlen((char*)msg), 100);
 
         osMessageQueuePut(TrackHandle, &status, 0, 0);
-        osDelay(500);
+        osDelay(50);
     }
 }

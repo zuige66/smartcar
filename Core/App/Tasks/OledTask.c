@@ -2,8 +2,6 @@
 #include "main.h"
 #include "cmsis_os2.h"
 #include "oled.h"
-#include "FreeRTOS.h"
-
 
 extern osMessageQueueId_t LEDFlashHandle;
 extern osMessageQueueId_t DistanceHandle;
@@ -25,10 +23,10 @@ void StartOledTask(void *argument) {
      /* Infinite loop */
      for(;;)
      {
-         osMessageQueueGet(LEDFlashHandle, &flashCount, 0, 0);
-         osMessageQueueGet(DistanceHandle, &distance, 0, 0);
-         osMessageQueueGet(TrackHandle, &status, 0, 0);
-         osMessageQueueGet(DriverPWMHandle, &msg, 0, 0);
+         osMessageQueueGet(LEDFlashHandle, &flashCount, 0, 10);
+         osMessageQueueGet(DistanceHandle, &distance, 0, 10);
+         osMessageQueueGet(TrackHandle, &status, 0, 10);
+         osMessageQueueGet(DriverPWMHandle, &msg, 0, 10);
          int dist_int = distance;
          int dist_dec = (distance - dist_int)*100;
          x1 = (status >> 0) & 1;
@@ -36,7 +34,6 @@ void StartOledTask(void *argument) {
          x3 = (status >> 2) & 1;
          x4 = (status >> 3) & 1;
          sprintf(str, "flashCount: %lu", flashCount);
-
          sprintf(dismeg, "dis: %d.%02d cm", dist_int, dist_dec);
          sprintf(status_str, "track:%d  ",  status);
          sprintf(status_div_str, "X1X2X3X4:%d%d%d%d",  x1, x2,x3, x4);
@@ -45,11 +42,11 @@ void StartOledTask(void *argument) {
          //OLED_PrintString(1, 1, "hello，world", &font16x16, OLED_COLOR_NORMAL);
          OLED_PrintString(1, 1, str, &font16x16, OLED_COLOR_NORMAL);
          OLED_PrintString(1, 16, dismeg, &font16x16, OLED_COLOR_NORMAL);
-         //OLED_PrintString(1, 32, status_str, &font16x16, OLED_COLOR_NORMAL);
-         OLED_PrintString(1, 32, msg_str, &font16x16, OLED_COLOR_NORMAL);
+         OLED_PrintString(1, 32, status_str, &font16x16, OLED_COLOR_NORMAL);
+         //OLED_PrintString(1, 32, msg_str, &font16x16, OLED_COLOR_NORMAL);
          OLED_PrintString(1, 48, status_div_str, &font16x16, OLED_COLOR_NORMAL);
          OLED_ShowFrame();
-         osDelay(10);
+         osDelay(300);
 
      }
      /* USER CODE END StartOledTask */

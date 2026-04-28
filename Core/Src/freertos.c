@@ -89,6 +89,13 @@ const osThreadAttr_t DriverTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
+/* Definitions for CtrlTask */
+osThreadId_t CtrlTaskHandle;
+const osThreadAttr_t CtrlTask_attributes = {
+  .name = "CtrlTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for LEDFlash */
 osMessageQueueId_t LEDFlashHandle;
 const osMessageQueueAttr_t LEDFlash_attributes = {
@@ -109,6 +116,16 @@ osMessageQueueId_t DriverPWMHandle;
 const osMessageQueueAttr_t DriverPWM_attributes = {
   .name = "DriverPWM"
 };
+/* Definitions for MotorAction */
+osMessageQueueId_t MotorActionHandle;
+const osMessageQueueAttr_t MotorAction_attributes = {
+  .name = "MotorAction"
+};
+/* Definitions for EchoBinarySem */
+osSemaphoreId_t EchoBinarySemHandle;
+const osSemaphoreAttr_t EchoBinarySem_attributes = {
+  .name = "EchoBinarySem"
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -121,6 +138,7 @@ extern void StartOledTask(void *argument);
 extern void StartHCSR04Task(void *argument);
 extern void StartTrackTask(void *argument);
 extern void StartDriverTask(void *argument);
+extern void StartCtrlTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -140,6 +158,7 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
+  EchoBinarySemHandle = osSemaphoreNew(1, 0, &EchoBinarySem_attributes);
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -158,6 +177,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of DriverPWM */
   DriverPWMHandle = osMessageQueueNew (16, sizeof(uint32_t), &DriverPWM_attributes);
+
+  /* creation of MotorAction */
+  MotorActionHandle = osMessageQueueNew (16, sizeof(uint16_t), &MotorAction_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -181,6 +203,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of DriverTask */
   DriverTaskHandle = osThreadNew(StartDriverTask, NULL, &DriverTask_attributes);
+
+  /* creation of CtrlTask */
+  CtrlTaskHandle = osThreadNew(StartCtrlTask, NULL, &CtrlTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */

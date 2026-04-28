@@ -22,7 +22,7 @@ void StartUartTask(void *argument) {
         // }
         // HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
         
-        osDelay(50);
+        osDelay(500);
     }
     /* USER CODE END StartUartTask */
 }

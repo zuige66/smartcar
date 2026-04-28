@@ -38,8 +38,9 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Src/font.c
         Core/App/Tasks/HCSR04.c
         Core/App/Tasks/TrackTask.c
-        Core/App/Tasks/data.h
         Core/App/Tasks/DriverTask.c
+        Core/App/Tasks/CtrlTask.c
+        Core/App/Tasks/CtrlTask.c
 )
 
 # Add STM32CubeMX generated sources

@@ -73,7 +73,7 @@ osThreadId_t HCSR04TaskHandle;
 const osThreadAttr_t HCSR04Task_attributes = {
   .name = "HCSR04Task",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityRealtime,
 };
 /* Definitions for TrackTask */
 osThreadId_t TrackTaskHandle;
@@ -179,7 +179,7 @@ void MX_FREERTOS_Init(void) {
   DriverPWMHandle = osMessageQueueNew (16, sizeof(uint32_t), &DriverPWM_attributes);
 
   /* creation of MotorAction */
-  MotorActionHandle = osMessageQueueNew (16, sizeof(uint16_t), &MotorAction_attributes);
+  MotorActionHandle = osMessageQueueNew (16, sizeof(uint64_t), &MotorAction_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */

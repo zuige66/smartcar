@@ -48,13 +48,11 @@ uint8_t OLED_GRAM[OLED_PAGE][OLED_COLUMN];
  */
 void OLED_Send(uint8_t *data, uint8_t len)
 {
-  HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(&hi2c1, OLED_ADDRESS, data, len, HAL_MAX_DELAY);
+  HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(&hi2c1, OLED_ADDRESS, data, len, 100);
   if (status != HAL_OK) {
-    // I2C通信失败，这里可以添加错误处理
-    char msg[] = "OLED I2C Error!\r\n";
-     HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
-    // 例如：点亮错误LED，或者通过串口发送错误信息
-    HAL_Delay(500);
+    // I2C通信失败，尝试恢复I2C总线
+    HAL_I2C_DeInit(&hi2c1);
+    HAL_I2C_Init(&hi2c1);
   }
 }
 

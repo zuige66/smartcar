@@ -19,14 +19,18 @@ extern osMessageQueueId_t MotorActionHandle;  // 电机控制指令队列
 typedef enum {
     MOTOR_CMD_STOP = 0,      // 停止
     MOTOR_CMD_FORWARD,       // 前进
-    MOTOR_CMD_TURN_LEFT,     // 左转
-    MOTOR_CMD_TURN_RIGHT     // 右转
+    MOTOR_CMD_TURN_LEFT,     // 差速左转（循迹用）
+    MOTOR_CMD_TURN_RIGHT,    // 差速右转（循迹用）
+    MOTOR_CMD_SPIN_LEFT,     // 原地左转（左轮后退+右轮前进）
+    MOTOR_CMD_SPIN_RIGHT     // 原地右转（左轮前进+右轮后退）
 } MotorCmdTypeDef;
 
 // 电机控制指令结构体（与CtrlTask保持一致）
 typedef struct {
     MotorCmdTypeDef cmd;     // 动作指令
-    uint16_t pwm;            // 速度PWM值 0-1000
+    uint16_t pwm;            // 速度PWM值 0-1000（避障用）
+    uint16_t pwm_left;       // 左轮PWM（循迹差速用）
+    uint16_t pwm_right;      // 右轮PWM（循迹差速用）
 } MotorActionMsg;
 
 /**
@@ -82,8 +86,8 @@ void StartDriverTask(void *argument) {
                 case MOTOR_CMD_FORWARD:
                     Motor_SetDirection(MOTOR_LEFT, MOTOR_FORWARD);
                     Motor_SetDirection(MOTOR_RIGHT, MOTOR_FORWARD);
-                    Motor_SetSpeed(MOTOR_LEFT, motor_cmd.pwm);
-                    Motor_SetSpeed(MOTOR_RIGHT, motor_cmd.pwm);
+                    Motor_SetSpeed(MOTOR_LEFT, motor_cmd.pwm_left);
+                    Motor_SetSpeed(MOTOR_RIGHT, motor_cmd.pwm_right);
                     break;
 
                 case MOTOR_CMD_TURN_LEFT:
@@ -100,6 +104,22 @@ void StartDriverTask(void *argument) {
                     Motor_SetDirection(MOTOR_RIGHT, MOTOR_FORWARD);
                     Motor_SetSpeed(MOTOR_LEFT, motor_cmd.pwm);
                     Motor_SetSpeed(MOTOR_RIGHT, motor_cmd.pwm / 3);  // 内圈减速
+                    break;
+
+                case MOTOR_CMD_SPIN_LEFT:
+                    // 原地左转：左轮后退，右轮前进
+                    Motor_SetDirection(MOTOR_LEFT, MOTOR_BACKWARD);
+                    Motor_SetDirection(MOTOR_RIGHT, MOTOR_FORWARD);
+                    Motor_SetSpeed(MOTOR_LEFT, motor_cmd.pwm);
+                    Motor_SetSpeed(MOTOR_RIGHT, motor_cmd.pwm);
+                    break;
+
+                case MOTOR_CMD_SPIN_RIGHT:
+                    // 原地右转：左轮前进，右轮后退
+                    Motor_SetDirection(MOTOR_LEFT, MOTOR_FORWARD);
+                    Motor_SetDirection(MOTOR_RIGHT, MOTOR_BACKWARD);
+                    Motor_SetSpeed(MOTOR_LEFT, motor_cmd.pwm);
+                    Motor_SetSpeed(MOTOR_RIGHT, motor_cmd.pwm);
                     break;
 
                 default:

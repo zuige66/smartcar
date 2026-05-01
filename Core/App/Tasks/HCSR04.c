@@ -10,65 +10,61 @@
 #include "oled.h"
 
 extern osMessageQueueId_t DistanceHandle;
-extern osSemaphoreId_t EchoBinarySemHandle;
-
-uint8_t echo_flag = 0;
-uint32_t rising_cnt = 0;
-uint32_t falling_cnt = 0;
 
 void StartHCSR04Task(void *argument) {
 
     float distance = 0.0f;
+
+    // 启动TIM1计数器（只需启动一次）
+    HAL_TIM_Base_Start(&htim1);
+
     for(;;)
     {
+        // 1. 发送Trig脉冲（至少10us）
+        HAL_GPIO_WritePin(HCSR04_Trig_GPIO_Port, HCSR04_Trig_Pin, GPIO_PIN_RESET);
+        osDelay(1);
         HAL_GPIO_WritePin(HCSR04_Trig_GPIO_Port, HCSR04_Trig_Pin, GPIO_PIN_SET);
-        osDelay(5);
+        osDelay(1);
         HAL_GPIO_WritePin(HCSR04_Trig_GPIO_Port, HCSR04_Trig_Pin, GPIO_PIN_RESET);
 
-        rising_cnt = 0;
-        falling_cnt = 0;
-        echo_flag = 0;
+        // 2. 轮询方式等待Echo上升沿
         __HAL_TIM_SET_COUNTER(&htim1, 0);
+        uint32_t timeout_start = HAL_GetTick();
+        uint32_t rising = 0, falling = 0;
 
-        __HAL_TIM_SET_CAPTUREPOLARITY(&htim1, TIM_CHANNEL_3, TIM_INPUTCHANNELPOLARITY_RISING);
-        HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_3);
-
-        osSemaphoreAcquire(EchoBinarySemHandle, 150);
-        HAL_TIM_IC_Stop_IT(&htim1, TIM_CHANNEL_3);
-
-        if(echo_flag == 2)
-        {
-            distance = (float)(falling_cnt - rising_cnt) * 0.017f;
+        // 等待上升沿（Echo变高）
+        while (HAL_GPIO_ReadPin(HCSR04_Echo_GPIO_Port, HCSR04_Echo_Pin) == GPIO_PIN_RESET) {
+            if (HAL_GetTick() - timeout_start > 50) {
+                goto sensor_fail;  // 超时
+            }
         }
-        else
-        {
-            distance = 999.9f;
+        rising = __HAL_TIM_GET_COUNTER(&htim1);
+
+        // 等待下降沿（Echo变低）
+        timeout_start = HAL_GetTick();
+        while (HAL_GPIO_ReadPin(HCSR04_Echo_GPIO_Port, HCSR04_Echo_Pin) == GPIO_PIN_SET) {
+            if (HAL_GetTick() - timeout_start > 50) {
+                goto sensor_fail;  // 超时
+            }
+        }
+        falling = __HAL_TIM_GET_COUNTER(&htim1);
+
+        // 3. 计算距离（1MHz时钟，每tick=1us，声速340m/s）
+        //    距离 = 时间(us) * 0.034 / 2 = 时间(us) * 0.017
+        distance = (float)(falling - rising) * 0.017f;
+
+        // 合理性检查：2cm ~ 400cm
+        if (distance < 2.0f || distance > 400.0f) {
+            distance = 0.0f;
         }
 
         osMessageQueuePut(DistanceHandle, &distance, 0, 100);
         osDelay(100);
-    }
-}
+        continue;
 
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
-{
-    if(htim->Instance == TIM1)
-    {
-        if(htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3)
-        {
-            if(echo_flag == 0)
-            {
-                rising_cnt = HAL_TIM_ReadCapturedValue(&htim1, TIM_CHANNEL_3);
-                __HAL_TIM_SET_CAPTUREPOLARITY(&htim1, TIM_CHANNEL_3, TIM_INPUTCHANNELPOLARITY_FALLING);
-                echo_flag = 1;
-            }
-            else if(echo_flag == 1)
-            {
-                falling_cnt = HAL_TIM_ReadCapturedValue(&htim1, TIM_CHANNEL_3);
-                __HAL_TIM_SET_CAPTUREPOLARITY(&htim1, TIM_CHANNEL_3, TIM_INPUTCHANNELPOLARITY_RISING);
-                echo_flag = 2;
-                osSemaphoreRelease(EchoBinarySemHandle);
-            }
-        }
+sensor_fail:
+        distance = 0.0f;
+        osMessageQueuePut(DistanceHandle, &distance, 0, 100);
+        osDelay(100);
     }
 }

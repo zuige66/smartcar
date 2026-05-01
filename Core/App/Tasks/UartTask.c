@@ -3,25 +3,49 @@
 #include "cmsis_os2.h"
 #include "main.h"
 #include "usart.h"
+
 extern osMessageQueueId_t DistanceHandle;
+extern osMessageQueueId_t TrackHandle;
+extern volatile uint8_t g_obs_state;
+
+static const char* obs_state_names[] = {
+    "LINE_FOLLOW",
+    "OBS_STOP",
+    "TURN_LEFT",
+    "CHK_LEFT",
+    "TURN_RIGHT",
+    "CHK_RIGHT",
+    "BYPASS_FWD"
+};
 
 void StartUartTask(void *argument) {
     /* USER CODE BEGIN StartUartTask */
-    char msg[64];
-    float distance;
-    osStatus_t status;
+    char msg[128];
+    float distance = 0.0f;
+    uint8_t track_data = 0;
+    HAL_StatusTypeDef tx_status;
     /* Infinite loop */
     for(;;)
     {
-        // // 发送距离数据
-        // status = osMessageQueueGet(DistanceHandle, &distance, 0, 1000);
-        // if (status == osOK) {
-        //     sprintf(msg, "Distance: %.2f cm \r\n", distance);
-        // } else {
-        //     sprintf(msg, "Distance: error (status: %d)\r\n", status);
-        // }
-        // HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
-        
+        osMessageQueueGet(DistanceHandle, &distance, 0, 10);
+        osMessageQueueGet(TrackHandle, &track_data, 0, 10);
+
+        uint8_t state = g_obs_state;
+        if (state > 6) state = 0;
+
+        int dist_int = (int)distance;
+        int dist_dec = (int)((distance - dist_int) * 100);
+
+        int len = sprintf(msg, "ST:%s | dis:%d.%02dcm | track:0x%02X\r\n",
+                obs_state_names[state], dist_int, dist_dec, track_data);
+        if (len > 0) {
+            tx_status = HAL_UART_Transmit(&huart2, (uint8_t *)msg, (uint16_t)len, 200);
+            if (tx_status != HAL_OK) {
+                HAL_UART_DeInit(&huart2);
+                MX_USART2_UART_Init();
+            }
+        }
+
         osDelay(500);
     }
     /* USER CODE END StartUartTask */

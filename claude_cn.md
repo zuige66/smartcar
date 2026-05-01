@@ -110,40 +110,64 @@
 
 | 任务 | 优先级 (CMSIS) | CubeMX 值 | 栈大小 | 周期 | 文件 |
 |---|---|---|---|---|---|
-| HCSR04Task | osPriorityRealtime (48) | 48 | 512B | ~200ms | HCSR04.c |
-| DriverTask | osPriorityAboveNormal (40) | 40 | 512B | 事件驱动 | DriverTask.c |
-| TrackTask | osPriorityNormal1 (25) | 25 | 512B | 50ms | TrackTask.c |
+| HCSR04Task | osPriorityRealtime (48) | 48 | 512B | ~100ms | HCSR04.c |
+| TrackTask | osPriorityAboveNormal (40) | 40 | 512B | 80ms | TrackTask.c |
+| DriverTask | osPriorityNormal (24) | 24 | 512B | 事件驱动 | DriverTask.c |
 | CtrlTask | osPriorityNormal (24) | 24 | 512B | 30ms | CtrlTask.c |
-| OledTask | osPriorityNormal (24) | 24 | 640B | 300ms | OledTask.c |
-| UartTask | osPriorityNormal (24) | 24 | 640B | 500ms | UartTask.c |
+| OledTask | osPriorityLow (12) | 12 | 640B | 300ms | OledTask.c |
+| UartTask | osPriorityLow1 (13) | 13 | 640B | 500ms | UartTask.c |
 | LedTask | osPriorityLow (12) | 12 | 512B | 500ms | LedTask.c |
 
 ### 4.2 数据流
 
 ```
-HCSR04Task ──[DistanceQueue]──→ CtrlTask ──[MotorActionQueue]──→ DriverTask ──→ 电机
-TrackTask  ──[TrackQueue]──────→ CtrlTask                                   ↑
-HCSR04Task ──[DistanceQueue]──→ OledTask                              TIM3 编码器（反馈）
-TrackTask  ──[TrackQueue]──────→ OledTask
-HCSR04Task ──[DistanceQueue]──→ UartTask
-TrackTask  ──[TrackQueue]──────→ UartTask
+HCSR04Task ──[g_distance 全局变量]──→ CtrlTask ──[MotorActionQueue]──→ DriverTask ──→ 电机
+TrackTask  ──[TrackQueue]──────────→ CtrlTask                                   ↑
+HCSR04Task ──[g_distance 全局变量]──→ OledTask                            TIM3 编码器（反馈）
+TrackTask  ──[TrackQueue]──────────→ OledTask
+HCSR04Task ──[g_distance 全局变量]──→ UartTask
+TrackTask  ──[TrackQueue]──────────→ UartTask
 ```
 
-### 4.3 队列定义
+### 4.3 共享数据（全局变量）
+
+| 变量 | 类型 | 写入者 | 读取者 | 备注 |
+|---|---|---|---|---|
+| g_distance | volatile float | HCSR04Task | CtrlTask, OledTask, UartTask | 距离值(cm), 0.0=无效 |
+| g_obs_state | volatile uint8_t | CtrlTask | OledTask, UartTask | 避障状态机当前状态 |
+
+### 4.4 队列定义
 
 | 队列 | 元素大小 | 深度 | 生产者 | 消费者 |
 |---|---|---|---|---|
-| DistanceHandle | sizeof(float) = 4B | 16 | HCSR04Task | CtrlTask, OledTask, UartTask |
 | TrackHandle | sizeof(uint8_t) = 1B | 16 | TrackTask | CtrlTask, OledTask, UartTask |
 | MotorActionHandle | 12B (MotorActionMsg) | 16 | CtrlTask | DriverTask |
+| DistanceHandle | sizeof(float) = 4B | 16 | （未使用，遗留） | （未使用，遗留） |
 | LEDFlashHandle | sizeof(uint32_t) = 4B | 16 | LedTask | （无消费者） |
 | DriverPWMHandle | sizeof(uint32_t) = 4B | 16 | （无生产者） | （无消费者） |
 
-### 4.4 信号量
+### 4.5 信号量
 
 | 信号量 | 类型 | 状态 |
 |---|---|---|
 | EchoBinarySem | 二值信号量 | **未使用**（已创建但从未获取/释放，原为中断式 HCSR04 预留） |
+
+### 4.6 任务调度分析
+
+| 任务 | 优先级 | 周期 | 每次执行 CPU 时间 | 最大 CPU 占用 | 饥饿风险 |
+|---|---|---|---|---|---|
+| HCSR04Task | 48 (Realtime) | ~100ms | 30-60ms（轮询）+ 3ms（触发） | ~60% | 无（最高优先级） |
+| TrackTask | 40 (AboveNormal) | 80ms | <1ms | ~1% | 无 |
+| DriverTask | 24 (Normal) | 事件驱动 | <1ms | ~1% | 无 |
+| CtrlTask | 24 (Normal) | 30ms | 2-5ms | ~10% | 有：HCSR04 轮询期间被阻塞 30-60ms |
+| OledTask | 12 (Low) | 300ms | 10-20ms（I2C） | ~5% | 有：被高优先级任务延迟 |
+| UartTask | 13 (Low1) | 500ms | 2-5ms | ~1% | 有：被高优先级任务延迟 |
+| LedTask | 12 (Low) | 500ms | <1ms | ~0.2% | 无 |
+
+**关键说明**: HCSR04Task 轮询每约 100ms 阻塞 30-60ms。在此窗口期间，所有低优先级任务被抢占。这是可接受的，因为：
+- CtrlTask 的 30ms 周期可能延迟最多 60ms → 总计约 90ms，电机控制可容忍
+- OledTask/UartTask/LedTask 无实时要求
+- TrackTask（优先级 40）每次执行不到 1ms，可在 HCSR04 触发和轮询之间穿插执行
 
 ---
 
@@ -153,17 +177,20 @@ TrackTask  ──[TrackQueue]──────→ UartTask
 
 **模式**: 轮询（非中断）
 
-**测量周期**（约 200ms）：
-1. Trig 先拉低 1ms → 拉高 1ms → 拉低 1ms（产生 10µs 以上脉冲）
-2. 将 TIM1 计数器清零
-3. 轮询 Echo 引脚，等待高电平（上升沿），记录 `rising` 计数值
-4. 轮询 Echo 引脚，等待低电平（下降沿），记录 `falling` 计数值
-5. 距离 = (falling - rising) × 0.017 cm
-6. 有效范围: 2-400cm，超出范围返回 0.0f
-7. 将距离放入 DistanceHandle 队列
-8. osDelay(100)
+**输出**: 写入全局变量 `volatile float g_distance`（非队列）
 
-**超时**: 每个边沿等待 50ms 超时，超时后跳转 sensor_fail（发送 0.0f）
+**测量周期**（约 100ms）：
+1. **预等待**: 等待 Echo 引脚变低（排除上次测量残留），超时 50ms
+2. Trig 先拉低 1ms → 拉高 1ms → 拉低 1ms（产生 10µs 以上脉冲）
+3. 将 TIM1 计数器清零
+4. 轮询 Echo 引脚，等待高电平（上升沿），记录 `rising` 计数值
+5. 轮询 Echo 引脚，等待低电平（下降沿），记录 `falling` 计数值
+6. 持续时间 = falling - rising，合理性检查 117-23529us (2-400cm)
+7. 距离 = 持续时间 × 0.017 cm
+8. 写入 `g_distance`
+9. osDelay(80)
+
+**超时**: 每个边沿等待 30ms 超时，超时后跳转 sensor_fail（写入 g_distance=0.0f）
 
 **关键依赖**: 任务启动时调用一次 `HAL_TIM_Base_Start(&htim1)`
 
@@ -175,13 +202,15 @@ TrackTask  ──[TrackQueue]──────→ UartTask
 
 **状态字节**: `(X4<<3) | (X3<<2) | (X2<<1) | (X1<<0)`
 
-**额外**: 每 50ms 通过 `HAL_UART_Transmit` 发送串口调试信息（可能与 UartTask 冲突）
+**周期**: 80ms（原为 50ms，已减小以匹配传感器响应时间）
+
+**输出**: 仅写入 TrackHandle 队列（UART 输出已移除，由 UartTask 统一处理）
 
 ### 5.3 控制任务 (CtrlTask.c)
 
 **核心决策循环**，周期 30ms：
 
-1. 读取距离 + 循迹队列（非阻塞）
+1. 读取 `g_distance` 全局变量 + 循迹队列（非阻塞）
 2. 读取编码器速度，然后重置计数器
 3. 通过 `CalculateTrackError()` 计算循迹偏差
 4. 运行避障状态机
@@ -364,22 +393,22 @@ float PID_Compute(PID_HandleTypeDef *pid, float measurement) {
 | 四轮同时后退 | 避障循环中距离数据过期 | 失败时重置 distance=0 + 10 秒超时 |
 | 循迹抖动 | 继电器式控制（开关控制） | 替换为 PID 差速转向 |
 | MotorAction 队列损坏 | sizeof(uint64_t)=8 < sizeof(MotorActionMsg)=12 | 改为 element_size=12 |
+| 超声波初始能读后续一直 0 | Distance 队列多消费者耗尽 + Echo 卡在高电平 | 改为全局 g_distance + 预等待 Echo 低电平 |
+| TrackTask 串口冲突 | TrackTask 和 UartTask 都使用 UART2 | 移除 TrackTask 中的串口输出 |
 
 ### 7.2 残留问题
 
-1. **TrackTask 串口冲突**: TrackTask 每 50ms 调用 `HAL_UART_Transmit()`，UartTask 也每 500ms 使用 UART2。无互斥保护 → 可能导致串口数据错乱。建议：移除 TrackTask 中的串口输出，统一由 UartTask 处理。
+1. **EchoBinarySem 未使用**: freertos.c 中创建的信号量从未被获取/释放（HCSR04 使用轮询模式）。浪费 80-100 字节 RAM。可以移除。
 
-2. **EchoBinarySem 未使用**: freertos.c 第 161 行创建的信号量从未被获取/释放（HCSR04 使用轮询模式）。浪费 80-100 字节 RAM。可以移除。
+2. **DriverPWM 队列未使用**: 已创建但从未有生产者/消费者。可以移除以节省 RAM。
 
-3. **DriverPWM 队列未使用**: 已创建但从未有生产者/消费者。可以移除以节省 RAM。
+3. **DistanceHandle 队列未使用**: 遗留队列，已被 g_distance 全局变量替代。可以移除以节省 RAM。
 
-4. **Distance 队列多消费者问题**: HCSR04Task 每约 200ms 放入一次距离，但 CtrlTask、OledTask、UartTask 各自独立 `osMessageQueueGet`。CtrlTask 可能读到过期数据。更好的方案：单一消费者 + 受临界区保护的共享全局变量。
+4. **g_obs_state 非原子访问**: `volatile uint8_t g_obs_state` 被 OledTask 和 UartTask 读取，同时被 CtrlTask 写入。单字节读取在 Cortex-M3 上是原子的，但如果扩展为多字节，需要互斥锁或临界区。
 
-5. **g_obs_state 非原子访问**: `volatile uint8_t g_obs_state` 被 OledTask 和 UartTask 读取，同时被 CtrlTask 写入。单字节读取在 Cortex-M3 上是原子的，但如果扩展为多字节，需要互斥锁或临界区。
+5. **HCSR04 轮询忙等待**: 等待 Echo 引脚边沿的 `while` 循环会阻塞任务而不让出 CPU（每个边沿 30ms 超时）。在此窗口期间低优先级任务被抢占。由于 HCSR04 是最高优先级任务，这是可接受的。
 
-6. **HCSR04 轮询忙等待**: 等待 Echo 引脚边沿的 `while` 循环会阻塞任务而不让出 CPU。如果传感器故障导致引脚持续为高，虽然 50ms 超时会触发，但任务仍被阻塞 50ms。
-
-7. **避障转向开环**: 转弯角度基于时间（810ms 转 90°，1590ms 转 180°）。对电池电压、地面摩擦和车轮打滑敏感。编码器可用于闭环转弯但目前未使用。
+6. **避障转向开环**: 转弯角度基于时间（810ms 转 90°，1590ms 转 180°）。对电池电压、地面摩擦和车轮打滑敏感。编码器可用于闭环转弯但目前未使用。
 
 ---
 
@@ -524,8 +553,8 @@ clion_car/
 | OBS_FORWARD_PWM | 250 | CtrlTask.c |
 | PWM_MAX_VALUE | 1000 | motor.h |
 | 控制周期 | 30ms | CtrlTask.c osDelay(30) |
-| 超声波周期 | ~200ms | HCSR04.c osDelay(100) |
-| 循迹周期 | 50ms | TrackTask.c osDelay(50) |
+| 超声波周期 | ~100ms | HCSR04.c osDelay(80) |
+| 循迹周期 | 80ms | TrackTask.c osDelay(80) |
 | OLED 刷新 | 300ms | OledTask.c osDelay(300) |
 | 串口输出 | 500ms | UartTask.c osDelay(500) |
 | FreeRTOS 堆 | 10240B | FreeRTOSConfig.h |

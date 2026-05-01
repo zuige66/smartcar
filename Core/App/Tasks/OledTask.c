@@ -3,7 +3,7 @@
 #include "cmsis_os2.h"
 #include "oled.h"
 
-extern osMessageQueueId_t DistanceHandle;
+extern volatile float g_distance;           // HCSR04Task 写入的共享距离
 extern osMessageQueueId_t TrackHandle;
 extern volatile uint8_t g_obs_state;
 
@@ -30,7 +30,7 @@ void StartOledTask(void *argument) {
      /* Infinite loop */
      for(;;)
      {
-         osMessageQueueGet(DistanceHandle, &distance, 0, 10);
+         distance = g_distance;              // 直接读全局
          osMessageQueueGet(TrackHandle, &status, 0, 10);
 
          int dist_int = (int)distance;

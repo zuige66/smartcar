@@ -12,7 +12,7 @@
 #include "Encoder.h"
 
 // 外部变量声明
-extern osMessageQueueId_t DistanceHandle;
+extern volatile float g_distance;           // HCSR04Task 写入的共享距离
 extern osMessageQueueId_t TrackHandle;
 extern osMessageQueueId_t MotorActionHandle;
 
@@ -155,8 +155,8 @@ void StartCtrlTask(void *argument) {
     motor_cmd.pwm_right = 0;
 
     for (;;) {
-        // 1. 读取传感器数据（非阻塞）
-        osMessageQueueGet(DistanceHandle, &distance, 0, 10);
+        // 1. 读取传感器数据
+        distance = g_distance;              // 直接读全局（HCSR04Task 写入）
         osMessageQueueGet(TrackHandle, &track_data, 0, 10);
 
         // 2. 读取编码器速度并重置

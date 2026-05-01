@@ -4,7 +4,7 @@
 #include "main.h"
 #include "usart.h"
 
-extern osMessageQueueId_t DistanceHandle;
+extern volatile float g_distance;           // HCSR04Task 写入的共享距离
 extern osMessageQueueId_t TrackHandle;
 extern volatile uint8_t g_obs_state;
 
@@ -27,7 +27,7 @@ void StartUartTask(void *argument) {
     /* Infinite loop */
     for(;;)
     {
-        osMessageQueueGet(DistanceHandle, &distance, 0, 10);
+        distance = g_distance;              // 直接读全局
         osMessageQueueGet(TrackHandle, &track_data, 0, 10);
 
         uint8_t state = g_obs_state;

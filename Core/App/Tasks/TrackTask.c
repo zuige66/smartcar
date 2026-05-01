@@ -3,11 +3,9 @@
 
 #include "cmsis_os2.h"
 #include "main.h"
-#include "usart.h"
 #include "gpio.h"
-extern osThreadId_t TrackTaskHandle;
-extern osMessageQueueId_t TrackHandle;
 
+extern osMessageQueueId_t TrackHandle;
 
 uint8_t Track_Get_X1(void) {
     return HAL_GPIO_ReadPin(X1_GPIO_Port, X1_Pin) == GPIO_PIN_RESET ? 0 : 1;
@@ -36,21 +34,15 @@ uint8_t Track_Get_AllStatus(void)
 }
 
 void StartTrackTask(void *argument) {
-    uint8_t x1, x2, x3, x4, status;
-    uint8_t msg[64];
+    uint8_t status;
 
     for (;;)
     {
-        x1 = Track_Get_X1();
-        x2 = Track_Get_X2();
-        x3 = Track_Get_X3();
-        x4 = Track_Get_X4();
         status = Track_Get_AllStatus();
 
-        sprintf((char*)msg, "X4:%d X3:%d X2:%d X1:%d | STA:0x%02X\r\n", x4, x3, x2, x1, status);
-        HAL_UART_Transmit(&huart2, msg, strlen((char*)msg), 100);
-
+        // 发送到队列（CtrlTask/OledTask/UartTask 消费）
         osMessageQueuePut(TrackHandle, &status, 0, 0);
-        osDelay(50);
+
+        osDelay(80);  // 80ms 周期（原来50ms太频繁，且去掉了串口输出避免冲突）
     }
 }

@@ -110,40 +110,64 @@
 
 | Task | Priority (CMSIS) | CubeMX Value | Stack | Period | File |
 |---|---|---|---|---|---|
-| HCSR04Task | osPriorityRealtime (48) | 48 | 512B | ~200ms | HCSR04.c |
-| DriverTask | osPriorityAboveNormal (40) | 40 | 512B | Event-driven | DriverTask.c |
-| TrackTask | osPriorityNormal1 (25) | 25 | 512B | 50ms | TrackTask.c |
+| HCSR04Task | osPriorityRealtime (48) | 48 | 512B | ~100ms | HCSR04.c |
+| TrackTask | osPriorityAboveNormal (40) | 40 | 512B | 80ms | TrackTask.c |
+| DriverTask | osPriorityNormal (24) | 24 | 512B | Event-driven | DriverTask.c |
 | CtrlTask | osPriorityNormal (24) | 24 | 512B | 30ms | CtrlTask.c |
-| OledTask | osPriorityNormal (24) | 24 | 640B | 300ms | OledTask.c |
-| UartTask | osPriorityNormal (24) | 24 | 640B | 500ms | UartTask.c |
+| OledTask | osPriorityLow (12) | 12 | 640B | 300ms | OledTask.c |
+| UartTask | osPriorityLow1 (13) | 13 | 640B | 500ms | UartTask.c |
 | LedTask | osPriorityLow (12) | 12 | 512B | 500ms | LedTask.c |
 
 ### 4.2 Data Flow
 
 ```
-HCSR04Task ──[DistanceQueue]──→ CtrlTask ──[MotorActionQueue]──→ DriverTask ──→ Motors
-TrackTask  ──[TrackQueue]──────→ CtrlTask                                   ↑
-HCSR04Task ──[DistanceQueue]──→ OledTask                              TIM3 Encoder (feedback)
-TrackTask  ──[TrackQueue]──────→ OledTask
-HCSR04Task ──[DistanceQueue]──→ UartTask
-TrackTask  ──[TrackQueue]──────→ UartTask
+HCSR04Task ──[g_distance 全局变量]──→ CtrlTask ──[MotorActionQueue]──→ DriverTask ──→ Motors
+TrackTask  ──[TrackQueue]──────────→ CtrlTask                                   ↑
+HCSR04Task ──[g_distance 全局变量]──→ OledTask                            TIM3 Encoder (feedback)
+TrackTask  ──[TrackQueue]──────────→ OledTask
+HCSR04Task ──[g_distance 全局变量]──→ UartTask
+TrackTask  ──[TrackQueue]──────────→ UartTask
 ```
 
-### 4.3 Queue Definitions
+### 4.3 Shared Data (Global Variables)
+
+| Variable | Type | Writer | Readers | Notes |
+|---|---|---|---|---|
+| g_distance | volatile float | HCSR04Task | CtrlTask, OledTask, UartTask | 距离值(cm), 0.0=无效 |
+| g_obs_state | volatile uint8_t | CtrlTask | OledTask, UartTask | 避障状态机当前状态 |
+
+### 4.4 Queue Definitions
 
 | Queue | Element Size | Depth | Producer | Consumer |
 |---|---|---|---|---|
-| DistanceHandle | sizeof(float) = 4B | 16 | HCSR04Task | CtrlTask, OledTask, UartTask |
 | TrackHandle | sizeof(uint8_t) = 1B | 16 | TrackTask | CtrlTask, OledTask, UartTask |
 | MotorActionHandle | 12B (MotorActionMsg) | 16 | CtrlTask | DriverTask |
+| DistanceHandle | sizeof(float) = 4B | 16 | (unused, legacy) | (unused, legacy) |
 | LEDFlashHandle | sizeof(uint32_t) = 4B | 16 | LedTask | (unused) |
 | DriverPWMHandle | sizeof(uint32_t) = 4B | 16 | (unused) | (unused) |
 
-### 4.4 Semaphore
+### 4.5 Semaphore
 
 | Semaphore | Type | Status |
 |---|---|---|
 | EchoBinarySem | Binary | **UNUSED** (created but never taken/given, was for interrupt-based HCSR04) |
+
+### 4.6 Task Scheduling Analysis
+
+| Task | Priority | Period | CPU Time/Exec | Max CPU% | Starvation Risk |
+|---|---|---|---|---|---|
+| HCSR04Task | 48 (Realtime) | ~100ms | 30-60ms (polling) + 3ms (trig) | ~60% | None (highest) |
+| TrackTask | 40 (AboveNormal) | 80ms | <1ms | ~1% | None |
+| DriverTask | 24 (Normal) | Event | <1ms | ~1% | None |
+| CtrlTask | 24 (Normal) | 30ms | 2-5ms | ~10% | Yes: blocked 30-60ms during HCSR04 polling |
+| OledTask | 12 (Low) | 300ms | 10-20ms (I2C) | ~5% | Yes: delayed by higher-priority tasks |
+| UartTask | 13 (Low1) | 500ms | 2-5ms | ~1% | Yes: delayed by higher-priority tasks |
+| LedTask | 12 (Low) | 500ms | <1ms | ~0.2% | None |
+
+**Key insight**: HCSR04Task polling blocks for 30-60ms every ~100ms. During this window, ALL lower-priority tasks are preempted. This is acceptable because:
+- CtrlTask's 30ms deadline may slip by up to 60ms → still ~90ms total, tolerable for motor control
+- OledTask/UartTask/LedTask have no real-time requirements
+- TrackTask (priority 40) only takes <1ms and can sneak in between HCSR04 trigger and polling
 
 ---
 
@@ -153,17 +177,20 @@ TrackTask  ──[TrackQueue]──────→ UartTask
 
 **Mode**: Polling (not interrupt)
 
-**Measurement cycle** (~200ms total):
-1. Trig LOW 1ms → HIGH 1ms → LOW 1ms (10µs+ pulse)
-2. Set TIM1 counter to 0
-3. Poll Echo pin, wait for HIGH (rising edge), record `rising` counter
-4. Poll Echo pin, wait for LOW (falling edge), record `falling` counter
-5. Distance = (falling - rising) * 0.017 cm
-6. Valid range: 2-400cm, else 0.0f
-7. Put distance to DistanceHandle queue
-8. osDelay(100)
+**Output**: 写入全局变量 `volatile float g_distance`（非队列）
 
-**Timeout**: 50ms per edge, goto sensor_fail on timeout (sends 0.0f)
+**Measurement cycle** (~100ms total):
+1. **Pre-wait**: 等待 Echo 引脚变低（排除上次测量残留），超时 50ms
+2. Trig LOW 1ms → HIGH 1ms → LOW 1ms (10µs+ pulse)
+3. Set TIM1 counter to 0
+4. Poll Echo pin, wait for HIGH (rising edge), record `rising` counter
+5. Poll Echo pin, wait for LOW (falling edge), record `falling` counter
+6. Duration = falling - rising, 合理性检查 117-23529us (2-400cm)
+7. Distance = duration * 0.017 cm
+8. Write to `g_distance`
+9. osDelay(80)
+
+**Timeout**: 30ms per edge, goto sensor_fail on timeout (写入 g_distance=0.0f)
 
 **Key dependency**: HAL_TIM_Base_Start(&htim1) called once at task start
 
@@ -175,13 +202,15 @@ TrackTask  ──[TrackQueue]──────→ UartTask
 
 **Status byte**: `(X4<<3) | (X3<<2) | (X2<<1) | (X1<<0)`
 
-**Also sends UART debug** every 50ms via `HAL_UART_Transmit` (potential conflict with UartTask)
+**Period**: 80ms (was 50ms, reduced to match sensor response time)
+
+**Output**: 仅写入 TrackHandle 队列（UART 输出已移除，由 UartTask 统一处理）
 
 ### 5.3 Control Task (CtrlTask.c)
 
 **Core decision loop** at 30ms period:
 
-1. Read Distance + Track queues (non-blocking)
+1. Read `g_distance` global + Track queue (non-blocking)
 2. Read encoder speed, reset counter
 3. Calculate track error via `CalculateTrackError()`
 4. Run obstacle avoidance state machine
@@ -364,22 +393,22 @@ float PID_Compute(PID_HandleTypeDef *pid, float measurement) {
 | All wheels backward | Stale distance in obstacle loop | Reset distance=0 on failure + 10s timeout |
 | Line follow jerky | Bang-bang control | Replaced with PID differential steering |
 | MotorAction queue corruption | sizeof(uint64_t)=8 < sizeof(MotorActionMsg)=12 | Changed to element_size=12 |
+| Ultrasonic shows 0 after working | Distance queue multi-consumer drain + Echo stuck HIGH | Changed to global g_distance + pre-wait for Echo LOW |
+| TrackTask UART conflict | TrackTask and UartTask both used UART2 | Removed UART from TrackTask |
 
 ### 7.2 REMAINING Issues
 
-1. **TrackTask UART conflict**: TrackTask calls `HAL_UART_Transmit()` every 50ms, UartTask also uses UART2 every 500ms. No mutex protection → potential UART corruption. Recommendation: Remove UART output from TrackTask, let UartTask handle all serial output.
+1. **EchoBinarySem unused**: Semaphore created in freertos.c but never used (HCSR04 is polling mode). Wastes 80-100 bytes RAM. Can be removed.
 
-2. **EchoBinarySem unused**: Semaphore created in freertos.c line 161 but never used (HCSR04 is polling mode). Wastes 80-100 bytes RAM. Can be removed.
+2. **DriverPWM queue unused**: Created but never produced/consumed. Can be removed to save RAM.
 
-3. **DriverPWM queue unused**: Created but never produced/consumed. Can be removed to save RAM.
+3. **DistanceHandle queue unused**: Legacy queue, replaced by g_distance global. Can be removed to save RAM.
 
-4. **Distance queue accumulation**: HCSR04Task puts distance every ~200ms, but multiple consumers (CtrlTask, OledTask, UartTask) all `osMessageQueueGet` independently. CtrlTask might get stale data. Better approach: single consumer with shared global variable protected by critical section.
+4. **g_obs_state non-atomic**: `volatile uint8_t g_obs_state` is read by OledTask and UartTask while written by CtrlTask. Single-byte reads are atomic on Cortex-M3, but if this expands to multi-byte, it needs a mutex or critical section.
 
-5. **g_obs_state non-atomic**: `volatile uint8_t g_obs_state` is read by OledTask and UartTask while written by CtrlTask. Single-byte reads are atomic on Cortex-M3, but if this expands to multi-byte, it needs a mutex or critical section.
+5. **HCSR04 polling busy-wait**: The `while` loops waiting for Echo pin edges block the task without yielding (30ms timeout per edge). During this window, lower-priority tasks are starved. Acceptable since HCSR04 is the highest priority task.
 
-6. **HCSR04 polling busy-wait**: The `while` loops waiting for Echo pin edges block the task without yielding. If the sensor malfunction causes the pin to stay HIGH, the 50ms timeout fires but the task is still blocked for 50ms.
-
-7. **Obstacle avoidance open-loop turning**: Turn angles are time-based (810ms for 90°, 1590ms for 180°). These are sensitive to battery voltage, surface friction, and wheel slip. The encoder could be used for closed-loop turning but isn't.
+6. **Obstacle avoidance open-loop turning**: Turn angles are time-based (810ms for 90°, 1590ms for 180°). These are sensitive to battery voltage, surface friction, and wheel slip. The encoder could be used for closed-loop turning but isn't.
 
 ---
 
@@ -523,8 +552,8 @@ Or modify directly in freertos.c task attributes (survives regeneration if in US
 | OBS_FORWARD_PWM | 250 | CtrlTask.c |
 | PWM_MAX_VALUE | 1000 | motor.h |
 | Control period | 30ms | CtrlTask.c osDelay(30) |
-| Ultrasonic cycle | ~200ms | HCSR04.c osDelay(100) |
-| Track cycle | 50ms | TrackTask.c osDelay(50) |
+| Ultrasonic cycle | ~100ms | HCSR04.c osDelay(80) |
+| Track cycle | 80ms | TrackTask.c osDelay(80) |
 | OLED refresh | 300ms | OledTask.c osDelay(300) |
 | UART output | 500ms | UartTask.c osDelay(500) |
 | FreeRTOS heap | 10240B | FreeRTOSConfig.h |

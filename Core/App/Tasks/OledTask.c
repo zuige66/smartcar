@@ -3,9 +3,12 @@
 #include "cmsis_os2.h"
 #include "oled.h"
 
-extern volatile float g_distance;           // HCSR04Task 写入的共享距离
-extern osMessageQueueId_t TrackHandle;
+extern volatile float g_distance;
 extern volatile uint8_t g_obs_state;
+extern osMessageQueueId_t TrackHandle;
+extern volatile uint8_t  g_ic_state;       // 0=等待上升 1=等待下降 2=完成
+extern volatile uint32_t g_ic_duration;    // 脉宽 µs
+extern volatile uint8_t  g_ic_timeout;     // 1=本次超时
 
 static const char* obs_state_names[] = {
     "LINE_FOLLOW",
@@ -24,29 +27,29 @@ void StartOledTask(void *argument) {
      char line1[22];
      char line2[22];
      char line3[22];
-     uint8_t status = 0;
-     uint8_t x1, x2, x3, x4;
+     // uint8_t status = 0;
+     // uint8_t x1, x2, x3, x4;
      OLED_Init();
      /* Infinite loop */
      for(;;)
      {
-         distance = g_distance;              // 直接读全局
-         osMessageQueueGet(TrackHandle, &status, 0, 10);
+         distance = g_distance;
+         // osMessageQueueGet(TrackHandle, &status, 0, 10);
 
          int dist_int = (int)distance;
          int dist_dec = (int)((distance - dist_int) * 100);
-         x1 = (status >> 0) & 1;
-         x2 = (status >> 1) & 1;
-         x3 = (status >> 2) & 1;
-         x4 = (status >> 3) & 1;
+         // x1 = (status >> 0) & 1;
+         // x2 = (status >> 1) & 1;
+         // x3 = (status >> 2) & 1;
+         // x4 = (status >> 3) & 1;
 
          uint8_t state = g_obs_state;
          if (state > 6) state = 0;
 
          sprintf(line0, "ST:%s", obs_state_names[state]);
          sprintf(line1, "dis:%d.%02dcm", dist_int, dist_dec);
-         sprintf(line2, "track:0x%02X", status);
-         sprintf(line3, "X1X2X3X4:%d%d%d%d", x1, x2, x3, x4);
+         sprintf(line2, "IC:%d dur:%lu", g_ic_state, g_ic_duration);
+         sprintf(line3, "TO:%d", g_ic_timeout);
 
          OLED_NewFrame();
          OLED_PrintString(1, 1, line0, &font16x16, OLED_COLOR_NORMAL);

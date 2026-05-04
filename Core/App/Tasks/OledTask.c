@@ -9,6 +9,8 @@ extern osMessageQueueId_t TrackHandle;
 extern volatile uint8_t  g_ic_state;       // 0=等待上升 1=等待下降 2=完成
 extern volatile uint32_t g_ic_duration;    // 脉宽 µs
 extern volatile uint8_t  g_ic_timeout;     // 1=本次超时
+extern volatile uint32_t g_ic_timeout_total; // 累计超时次数
+extern volatile uint32_t g_ic_success_total; // 累计成功次数
 
 static const char* obs_state_names[] = {
     "LINE_FOLLOW",
@@ -49,7 +51,7 @@ void StartOledTask(void *argument) {
          sprintf(line0, "ST:%s", obs_state_names[state]);
          sprintf(line1, "dis:%d.%02dcm", dist_int, dist_dec);
          sprintf(line2, "IC:%d dur:%lu", g_ic_state, g_ic_duration);
-         sprintf(line3, "TO:%d", g_ic_timeout);
+         sprintf(line3, "ok:%lu fail:%lu", g_ic_success_total, g_ic_timeout_total);
 
          OLED_NewFrame();
          OLED_PrintString(1, 1, line0, &font16x16, OLED_COLOR_NORMAL);

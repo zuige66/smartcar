@@ -1,7 +1,11 @@
 /**
- * HC-SR04 超声波测距 — 与参考代码完全一致的实现
+ * HC-SR04 超声波测距 — TIM1 输入捕获中断 + 5次采样去极值
  *
- * 保留全局变量接口供其他任务读取。
+ * 中断方案：
+ *   - TIM1 CH3 输入捕获，上升沿记录时刻，切换到下降沿
+ *   - 下降沿计算脉宽，信号量通知任务
+ *   - 最小脉宽检查（<100µs = 噪声，丢弃）
+ *   - 不使用 HAL_TIM_IC_Stop_IT / Start_IT，手动控制中断使能
  */
 
 #include "cmsis_os2.h"
@@ -9,93 +13,173 @@
 #include "stm32f1xx_hal_gpio.h"
 #include "tim.h"
 #include <stm32f1xx_hal_tim.h>
+#include "usart.h"
+#include <stdio.h>
+
+#define HCSR04_SAMPLES 5
+#define MIN_PULSE_US   100  // 最小有效脉宽，过滤噪声
 
 // ===== 共享变量 =====
 volatile float    g_distance    = 0.0f;
 volatile uint8_t  g_ic_state    = 0;
 volatile uint32_t g_ic_duration = 0;
 volatile uint8_t  g_ic_timeout  = 0;
+volatile uint32_t g_ic_timeout_total = 0;
+volatile uint32_t g_ic_success_total = 0;
 
-// ===== RTOS =====
+extern TIM_HandleTypeDef htim1;
+extern UART_HandleTypeDef huart2;
 extern osSemaphoreId_t EchoBinarySemHandle;
 
-// ===== TIM =====
-extern TIM_HandleTypeDef htim1;
+// ===== ISR 内部变量 =====
+static volatile uint32_t ic_rising_val = 0;
+static volatile uint32_t ic_duration_isr = 0;
+static volatile uint8_t  ic_capture_state = 0;  // 0=等待上升沿 1=已捕获上升沿 2=完成
 
-// ===== 中断内部变量 =====
-static volatile uint8_t  echo_flag    = 0;
-static volatile uint32_t rising_cnt   = 0;
-static volatile uint32_t falling_cnt  = 0;
+// 微秒延时
+static void delay_us(uint32_t us) {
+    uint32_t i = us * 9;
+    while (i--) { __NOP(); }
+}
 
 // ===================================================================
-// TIM1 输入捕获中断回调
+// TIM1 输入捕获中断回调（上升沿 → 切换下降沿 → 完成）
 // ===================================================================
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
     if (htim->Instance != TIM1) return;
-    if (htim->Channel != HAL_TIM_ACTIVE_CHANNEL_3) return;
 
-    if (echo_flag == 0) {
-        rising_cnt = HAL_TIM_ReadCapturedValue(&htim1, TIM_CHANNEL_3);
-        __HAL_TIM_SET_CAPTUREPOLARITY(&htim1, TIM_CHANNEL_3, TIM_INPUTCHANNELPOLARITY_FALLING);
-        echo_flag = 1;
-    } else if (echo_flag == 1) {
-        falling_cnt = HAL_TIM_ReadCapturedValue(&htim1, TIM_CHANNEL_3);
-        __HAL_TIM_SET_CAPTUREPOLARITY(&htim1, TIM_CHANNEL_3, TIM_INPUTCHANNELPOLARITY_RISING);
-        echo_flag = 2;
+    uint32_t capture = __HAL_TIM_GET_COMPARE(&htim1, TIM_CHANNEL_3);
+
+    if (ic_capture_state == 0) {
+        // 上升沿：记录时刻，切换到下降沿
+        ic_rising_val = capture;
+        ic_capture_state = 1;
+        __HAL_TIM_SET_CAPTUREPOLARITY(&htim1, TIM_CHANNEL_3,
+                                      TIM_INPUTCHANNELPOLARITY_FALLING);
+    } else if (ic_capture_state == 1) {
+        // 下降沿：计算脉宽
+        uint32_t falling = capture;
+        uint32_t duration;
+        if (falling >= ic_rising_val) {
+            duration = falling - ic_rising_val;
+        } else {
+            duration = (0xFFFF - ic_rising_val) + falling + 1;
+        }
+
+        // 最小脉宽检查：太短说明是噪声
+        if (duration < MIN_PULSE_US) {
+            // 丢弃，回到等待上升沿
+            ic_capture_state = 0;
+            __HAL_TIM_SET_CAPTUREPOLARITY(&htim1, TIM_CHANNEL_3,
+                                          TIM_INPUTCHANNELPOLARITY_RISING);
+            return;
+        }
+
+        ic_duration_isr = duration;
+        ic_capture_state = 2;
         osSemaphoreRelease(EchoBinarySemHandle);
     }
 }
 
 // ===================================================================
-// 超声波任务
+// 超声波任务：中断采集 + 5次采样去极值取平均
 // ===================================================================
 void StartHCSR04Task(void *argument) {
     (void)argument;
 
+    // 启动 TIM1 计数器，使能捕获通道（不停止，一直运行）
+    HAL_TIM_Base_Start(&htim1);
+    TIM_CCxChannelCmd(htim1.Instance, TIM_CHANNEL_3, TIM_CCx_ENABLE);
+
     for (;;) {
-        // ── 0. 排空残留信号量（防止上次周期迟到ISR造成误触发） ──
-        osSemaphoreAcquire(EchoBinarySemHandle, 0);
+        float samples[HCSR04_SAMPLES];
+        uint8_t valid = 0;
+        uint8_t cycle_fail = 0;
 
-        // ── 1. Trig 脉冲 10-20µs ──
-        HAL_GPIO_WritePin(HCSR04_Trig_GPIO_Port, HCSR04_Trig_Pin, GPIO_PIN_SET);
-        for (volatile uint32_t i = 0; i < 500; i++);   // ~15µs @72MHz
-        HAL_GPIO_WritePin(HCSR04_Trig_GPIO_Port, HCSR04_Trig_Pin, GPIO_PIN_RESET);
+        for (int i = 0; i < HCSR04_SAMPLES; i++) {
+            // 1. 清空残留信号量
+            while (osSemaphoreAcquire(EchoBinarySemHandle, 0) == osOK) {}
 
-        // ── 2. 重置状态，立即启动捕获（必须在 Echo 返回之前准备好） ──
-        rising_cnt  = 0;
-        falling_cnt = 0;
-        echo_flag   = 0;
-        g_ic_state  = 1;
+            // 2. 重置捕获状态，配置上升沿
+            ic_capture_state = 0;
+            ic_duration_isr = 0;
+            __HAL_TIM_SET_CAPTUREPOLARITY(&htim1, TIM_CHANNEL_3,
+                                          TIM_INPUTCHANNELPOLARITY_RISING);
 
-        __HAL_TIM_SET_COUNTER(&htim1, 0);
-        __HAL_TIM_SET_CAPTUREPOLARITY(&htim1, TIM_CHANNEL_3, TIM_INPUTCHANNELPOLARITY_RISING);
-        HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_3);
+            // 3. 清标志 + 开中断
+            __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_CC3);
+            __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_CC3);
 
-        // ── 3. 等信号量（ISR 释放）或超时 150ms ──
-        osSemaphoreAcquire(EchoBinarySemHandle, 150);
-        HAL_TIM_IC_Stop_IT(&htim1, TIM_CHANNEL_3);
+            // 4. 发送 Trig 脉冲 15µs
+            HAL_GPIO_WritePin(HCSR04_Trig_GPIO_Port, HCSR04_Trig_Pin, GPIO_PIN_RESET);
+            delay_us(5);
+            HAL_GPIO_WritePin(HCSR04_Trig_GPIO_Port, HCSR04_Trig_Pin, GPIO_PIN_SET);
+            delay_us(15);
+            HAL_GPIO_WritePin(HCSR04_Trig_GPIO_Port, HCSR04_Trig_Pin, GPIO_PIN_RESET);
 
-        // ── 4. 结果 ──
-        if (echo_flag == 2) {
-            uint32_t duration = falling_cnt - rising_cnt;
-            g_ic_duration = duration;
-            g_ic_state = 3;
+            // 5. 等待信号量（测量完成），超时 60ms
+            osStatus_t sem_st = osSemaphoreAcquire(EchoBinarySemHandle, 60);
 
-            if (duration >= 117 && duration <= 23529) {
-                g_distance = (float)duration * 0.017f;
+            // 6. 关中断（不停定时器，不停通道）
+            __HAL_TIM_DISABLE_IT(&htim1, TIM_IT_CC3);
+
+            if (sem_st == osOK && ic_capture_state == 2) {
+                uint32_t duration = ic_duration_isr;
+                g_ic_duration = duration;
+                g_ic_state = 3;
+                if (duration >= 117 && duration <= 23529) {
+                    samples[valid++] = (float)duration * 0.017f;
+                }
             } else {
-                g_distance = 0.0f;
+                cycle_fail++;
+                g_ic_timeout_total++;
+                g_ic_state = 0;
+                g_ic_duration = 0;
+                // 复位传感器
+                HAL_GPIO_WritePin(HCSR04_Trig_GPIO_Port, HCSR04_Trig_Pin, GPIO_PIN_SET);
+                delay_us(100);
+                HAL_GPIO_WritePin(HCSR04_Trig_GPIO_Port, HCSR04_Trig_Pin, GPIO_PIN_RESET);
             }
-            g_ic_timeout = 0;
-        } else {
-            g_ic_timeout++;
-            if (g_ic_timeout > 5) g_ic_timeout = 5;
-            g_distance = 0.0f;
-            g_ic_state = 0;
-            g_ic_duration = 0;
+
+            osDelay(80);
         }
 
-        // ── 5. 间隔 ──
-        osDelay(100);
+        // ── 去极值取平均 ──
+        if (valid >= 3) {
+            for (int i = 0; i < valid - 1; i++)
+                for (int j = 0; j < valid - i - 1; j++)
+                    if (samples[j] > samples[j+1]) {
+                        float t = samples[j]; samples[j] = samples[j+1]; samples[j+1] = t;
+                    }
+            float sum = 0;
+            for (int i = 1; i < valid - 1; i++) sum += samples[i];
+            g_distance = sum / (valid - 2);
+            g_ic_timeout = 0;
+            g_ic_success_total++;
+        } else if (valid > 0) {
+            float sum = 0;
+            for (int i = 0; i < valid; i++) sum += samples[i];
+            g_distance = sum / valid;
+            g_ic_timeout = 0;
+            g_ic_success_total++;
+        } else {
+            g_distance = 0.0f;
+            g_ic_timeout = cycle_fail;
+        }
+
+        // UART 输出
+        {
+            char dbg[128];
+            int dist_int = (int)g_distance;
+            int dist_dec = (int)((g_distance - dist_int) * 100);
+            int n = sprintf(dbg, "[HCSR04] dis:%d.%02dcm ok:%lu fail:%lu v:%d\r\n",
+                           dist_int, dist_dec, g_ic_success_total, g_ic_timeout_total, valid);
+            if (n > 0) {
+                if (HAL_UART_Transmit(&huart2, (uint8_t *)dbg, (uint16_t)n, 100) != HAL_OK) {
+                    HAL_UART_DeInit(&huart2);
+                    MX_USART2_UART_Init();
+                }
+            }
+        }
     }
 }

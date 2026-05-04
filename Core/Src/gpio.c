@@ -71,8 +71,8 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : X3_Pin X4_Pin */
-  GPIO_InitStruct.Pin = X3_Pin|X4_Pin;
+  /*Configure GPIO pins : X3_Pin X4_Pin HCSR04_Echo_Pin */
+  GPIO_InitStruct.Pin = X3_Pin|X4_Pin|HCSR04_Echo_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);

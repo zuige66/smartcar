@@ -36,15 +36,16 @@ void StartUartTask(void *argument) {
         int dist_int = (int)distance;
         int dist_dec = (int)((distance - dist_int) * 100);
 
-        int len = sprintf(msg, "ST:%s | dis:%d.%02dcm | track:0x%02X\r\n",
-                obs_state_names[state], dist_int, dist_dec, track_data);
-        if (len > 0) {
-            tx_status = HAL_UART_Transmit(&huart2, (uint8_t *)msg, (uint16_t)len, 200);
-            if (tx_status != HAL_OK) {
-                HAL_UART_DeInit(&huart2);
-                MX_USART2_UART_Init();
-            }
-        }
+        // UART 已移至 HCSR04.c 中输出，此处注释掉
+        //int len = sprintf(msg, "ST:%s | dis:%d.%02dcm | track:0x%02X\r\n",
+        //        obs_state_names[state], dist_int, dist_dec, track_data);
+        //if (len > 0) {
+        //    tx_status = HAL_UART_Transmit(&huart2, (uint8_t *)msg, (uint16_t)len, 200);
+        //    if (tx_status != HAL_OK) {
+        //        HAL_UART_DeInit(&huart2);
+        //        MX_USART2_UART_Init();
+        //    }
+        //}
 
         osDelay(500);
     }

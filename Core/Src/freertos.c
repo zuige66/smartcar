@@ -59,7 +59,7 @@ osThreadId_t UartTaskHandle;
 const osThreadAttr_t UartTask_attributes = {
   .name = "UartTask",
   .stack_size = 160 * 4,
-  .priority = (osPriority_t) osPriorityLow1,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for OledTask */
 osThreadId_t OledTaskHandle;
@@ -72,7 +72,7 @@ const osThreadAttr_t OledTask_attributes = {
 osThreadId_t HCSR04TaskHandle;
 const osThreadAttr_t HCSR04Task_attributes = {
   .name = "HCSR04Task",
-  .stack_size = 128 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityRealtime,
 };
 /* Definitions for TrackTask */
@@ -80,14 +80,14 @@ osThreadId_t TrackTaskHandle;
 const osThreadAttr_t TrackTask_attributes = {
   .name = "TrackTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal,
+  .priority = (osPriority_t) osPriorityNormal1,
 };
 /* Definitions for DriverTask */
 osThreadId_t DriverTaskHandle;
 const osThreadAttr_t DriverTask_attributes = {
   .name = "DriverTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for CtrlTask */
 osThreadId_t CtrlTaskHandle;
@@ -179,8 +179,7 @@ void MX_FREERTOS_Init(void) {
   DriverPWMHandle = osMessageQueueNew (16, sizeof(uint32_t), &DriverPWM_attributes);
 
   /* creation of MotorAction */
-  /* MotorActionMsg: enum(4) + 3*uint16_t(6) + padding(2) = 12 bytes */
-  MotorActionHandle = osMessageQueueNew (16, 12, &MotorAction_attributes);
+  MotorActionHandle = osMessageQueueNew (16, sizeof(uint64_t), &MotorAction_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */

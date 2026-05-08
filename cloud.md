@@ -16,7 +16,7 @@
 ### 1.1 Capabilities
 
 1. 4-channel IR line tracking (PID smooth differential steering)
-2. HC-SR04 ultrasonic obstacle detection (polling mode)
+2. HC-SR04 ultrasonic obstacle detection (**interrupt mode** - TIM1 CH3 input capture)
 3. 7-state obstacle avoidance state machine (stop → spin left 90° → check → spin right 180° → check → bypass)
 4. SSD1306 128x64 OLED real-time status display
 5. UART 115200 debug output
@@ -37,7 +37,7 @@
 | Right Motor PWM | PA1 | TIM2_CH2 | Speed control, 0-1000 |
 | Encoder Left CH1 | PB4 | TIM3_CH1 | Partial remap |
 | Encoder Left CH2 | PB5 | TIM3_CH2 | Partial remap |
-| HC-SR04 Echo | PA10 | TIM1_CH3 / GPIO | Polled as GPIO input |
+| HC-SR04 Echo | PA10 | TIM1_CH3 | **Alternate Function Input** (input capture) |
 | HC-SR04 Trig | PA11 | GPIO | Output trigger pulse |
 | Track Sensor X1 | PB14 | GPIO | IR sensor input |
 | Track Sensor X2 | PB15 | GPIO | IR sensor input |
@@ -175,24 +175,31 @@ TrackTask  ──[TrackQueue]──────────→ UartTask
 
 ### 5.1 HCSR04 Ultrasonic (HCSR04.c)
 
-**Mode**: Polling (not interrupt)
+**Mode**: **Interrupt-based** (TIM1 CH3 input capture)
 
 **Output**: 写入全局变量 `volatile float g_distance`（非队列）
 
+**Measurement principle**:
+- TIM1 CH3 (PA10) configured for input capture
+- First capture on **rising edge**: record timestamp
+- Second capture on **falling edge**: calculate duration
+- Duration = falling_timestamp - rising_timestamp
+- Distance = duration(us) * 0.017 cm
+
 **Measurement cycle** (~100ms total):
-1. **Pre-wait**: 等待 Echo 引脚变低（排除上次测量残留），超时 50ms
-2. Trig LOW 1ms → HIGH 1ms → LOW 1ms (10µs+ pulse)
-3. Set TIM1 counter to 0
-4. Poll Echo pin, wait for HIGH (rising edge), record `rising` counter
-5. Poll Echo pin, wait for LOW (falling edge), record `falling` counter
-6. Duration = falling - rising, 合理性检查 117-23529us (2-400cm)
-7. Distance = duration * 0.017 cm
-8. Write to `g_distance`
-9. osDelay(80)
+1. Reset capture state machine, set polarity to rising edge
+2. Send Trig pulse: LOW 5us → HIGH 15us → LOW
+3. Wait for semaphore released by interrupt (timeout 100ms)
+4. If successful: calculate distance, range check 2-400cm
+5. 5 samples with outlier removal and averaging
+6. Write final distance to `g_distance`
+7. osDelay(80)
 
-**Timeout**: 30ms per edge, goto sensor_fail on timeout (写入 g_distance=0.0f)
+**Interrupt callback**: `HAL_TIM_IC_CaptureCallback()` handles both edges
 
-**Key dependency**: HAL_TIM_Base_Start(&htim1) called once at task start
+**Key dependency**: `HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_3)` called once at task start
+
+**GPIO critical**: Echo pin (PA10) MUST be configured as `GPIO_MODE_AF_INPUT`, NOT `GPIO_MODE_AF_PP`
 
 ### 5.2 Line Tracking (TrackTask.c)
 

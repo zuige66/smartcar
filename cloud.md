@@ -68,8 +68,8 @@
 
 ### 3.3 TIM2 (Motor PWM)
 
-- Prescaler: 0 → 72MHz
-- Period: 999 → PWM frequency = 72kHz
+- Prescaler: 36 → 1MHz counter (APB1=36MHz)
+- Period: 999 → PWM frequency = 1kHz
 - CH1 (PA0): Left motor PWM
 - CH2 (PA1): Right motor PWM
 - PWM mode 1, Fast PWM
@@ -83,7 +83,7 @@
 
 ### 3.5 I2C1 (OLED)
 
-- Standard mode, 100kHz
+- Fast mode, 400kHz
 - PB6 (SCL), PB7 (SDA)
 
 ### 3.6 USART2 (Debug)

@@ -52,8 +52,8 @@
 **关键配置项：**
 
 - **模式**: PWM Generation CH1 & CH2
-- **Prescaler**: 71 (72MHz / 72 = 1MHz)
-- **Counter Period**: 1000 (1kHz PWM)
+- **Prescaler**: 36 (36MHz / 36 = 1MHz)
+- **Counter Period**: 999 (1kHz PWM)
 - **CH1/CH2 Mode**: PWM Mode 1
 - **Pulse**: 0 (初始占空比 0%)
 
@@ -95,13 +95,13 @@
 - PA3 (RX): Input
 - Pull: Up (RX)
 
-### 2.6 I2C1 - OLED 显示
+### 2.5 I2C1 - OLED 显示
 
 **关键配置项：**
 
-- **Mode**: I2C
-- **Speed Mode**: Standard (100kHz)
-- **Fast Mode**: Disabled
+- **模式**: I2C
+- **Speed Mode**: Fast Mode (400kHz)
+- **Clock Number**: 36 (400kHz 所需时钟数)
 
 **GPIO 配置 (PB6, PB7)**:
 - Mode: Alternate Function Open Drain

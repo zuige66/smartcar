@@ -156,6 +156,10 @@ void MX_FREERTOS_Init(void) {
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
+  /* Create the semaphores(s) */
+  /* creation of EchoBinarySem */
+  EchoBinarySemHandle = osSemaphoreNew(1, 0, &EchoBinarySem_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   EchoBinarySemHandle = osSemaphoreNew(1, 0, &EchoBinarySem_attributes);
